@@ -1,0 +1,209 @@
+---
+title: "Workout Prediction"
+author: "Michael McDermott"
+date: "December 7, 2014"
+output: html_document
+---
+
+```{r}
+jawtrain<-read.csv("pml-training.csv",na.strings=c("","NA","#DIV/0!"))
+library(caret)
+library(ggplot2)
+```
+
+
+##1Model
+###1.1Predictors
+
+The predictors used in this model were chosen based on the following set of observations:
+- The variables related to time and window are not useful for predicting how an exercise was done since this is not a time series problem (i.e. we shouldn't expect to predict what happens at a given time since the users will perform the exercises similarly at all future times), so we get rid of them.
+
+- Variables such as `max_roll_dumbbell` are summarizing other more complete variables such as `accel_dumbbell_x` (which I'll call canonical) and so we will focus on the latter type of variable and get rid of the "summarizing" variables (max,tot,min, anything else that doesn't look like the canonical variables).  Every possible type of canonical predictor was used in the model.
+
+- The `user_name` variable is very important as different people perform the excercises differently and so the different classes will depend greatly on this variable.  As a result we split the data into 6 parts, one for each different user, and make predictions based on their individual data. The following plot shows how the data can be very different from user to user (Charles and Pedro in this case) even if they are both doing the exercise 'properly' (i.e. classe A).
+
+```{r,echo=FALSE}
+qplot(jawtrain$gyros_belt_x[jawtrain$user_name == 'charles' & jawtrain$classe=='A'],jawtrain$accel_arm_x[jawtrain$user_name == 'charles' & jawtrain$classe=='A'],xlab="x-axis Gyros Belt",ylab="x-axis Arm Acceleration", main="Charles doing it right (classe A)",col)
+qplot(jawtrain$gyros_belt_x[jawtrain$user_name == 'pedro' & jawtrain$classe=='A'],jawtrain$accel_arm_x[jawtrain$user_name == 'pedro' & jawtrain$classe=='A'],xlab="x-axis Gyros Belt",ylab="x-axis Arm Acceleration", main="Pedro doing it right (classe A)",col)
+```
+
+###1.2 Training Method
+I tried several different techniques for optimal accuracy.  Since the outcome is not continuous linear model techniques are not as useful.  The random forest and naive bayses methods both took too long to run.  The linear discriminant analysis method was found to be sufficiently quick and quite accurate.
+
+###1.3 Processing
+The variables were processed using the centering and scaling scheme and nearly constant variables were removed using the `nearZeroVar()` function.
+
+##2 Cross Validation and Out of Sample Error
+
+A k-fold cross validation technique was applied to this data set.  After experimenting with data partitions I found a partition ratio of p=.75 to be about 90% accurate and so I used a value of k=4 (i.e. p=0.75 for each fold). 
+
+Then to estimate the out of sample error we can average the error on the test sets in each of the 4 folds.  However, a little care is required here.  Since my code calculates an accuracy for each user we should average weighted by how often each user appears in the training set of each fold to get the full accuracy. 
+
+As one can see in the code provide, the **estimate for out of sampling error (accuracy)** is 0.077 (0.923).
+
+#The Code
+
+Please note that my code gets rid of the troublesome columns (using the `nearZeroVar()` function) that the compiler is giving us warnings about, so they are not an issue!
+```{r}
+#a function which finds which columns have the same NA structure
+indexLike<-function(mydf,v){  #specifically assumes classe variable in last place
+  l<-dim(mydf)[2] 
+  newind<-c(2,l) #this keeps the user_name
+  
+  for(i in 3:(l-1)){
+    
+      if(identical(is.na(mydf[,i]),is.na(v))){
+        newind<-c(newind,i)
+      }
+      else{}
+      
+    }  
+    
+    
+  
+ newind
+}
+
+jawtrain<-read.csv("pml-training.csv",na.strings=c("","NA","#DIV/0!"))
+library(caret)
+set.seed(1337)
+accuracydf<-data.frame("User"=c('carlito','adelmo','eurico','jeremy','pedro','charles'),"Weight"=rep(0,6),"Acc"=rep(0,6))
+folds<-createFolds(jawtrain$classe,k=4,list=TRUE,returnTrain=TRUE)
+#creat a variable to keep track of accuracy of each fold
+fold_accuracy<-numeric(0)
+
+for(i in 1:4){
+indTrain<-folds[[i]]
+#indTrain<-createDataPartition(jawtrain$classe,p=.7,list=FALSE)
+jawtr<-jawtrain[indTrain,]
+jawtes<-jawtrain[-indTrain,]
+
+likeind<-indexLike(jawtr,jawtr$gyros_belt_x)
+
+jawtr_like<-jawtr[,likeind]
+#the test columns should be the same ofc
+jawtes_like<-jawtes[,likeind]
+
+
+
+carlito_tr<-subset(jawtr_like,jawtr_like$user_name == 'carlitos')
+adelmo_tr <-subset(jawtr_like,jawtr_like$user_name == 'adelmo')
+eurico_tr<-subset(jawtr_like,jawtr_like$user_name == 'eurico')
+jeremy_tr<-subset(jawtr_like,jawtr_like$user_name == 'jeremy')
+pedro_tr<-subset(jawtr_like,jawtr_like$user_name == 'pedro')
+charles_tr<-subset(jawtr_like,jawtr_like$user_name == 'charles')
+#for test set too
+carlito_tes<-subset(jawtes_like,jawtes_like$user_name == 'carlitos')
+adelmo_tes <-subset(jawtes_like,jawtes_like$user_name == 'adelmo')
+eurico_tes<-subset(jawtes_like,jawtes_like$user_name == 'eurico')
+jeremy_tes<-subset(jawtes_like,jawtes_like$user_name == 'jeremy')
+pedro_tes<-subset(jawtes_like,jawtes_like$user_name == 'pedro')
+charles_tes<-subset(jawtes_like,jawtes_like$user_name == 'charles')
+
+#we can already calculate the relative weights
+L<-dim(jawtr)[1]
+accuracydf[1,2]<-dim(carlito_tr)[1]/L
+accuracydf[2,2]<-dim(adelmo_tr)[1]/L
+accuracydf[3,2]<-dim(eurico_tr)[1]/L
+accuracydf[4,2]<-dim(jeremy_tr)[1]/L
+accuracydf[5,2]<-dim(pedro_tr)[1]/L
+accuracydf[6,2]<-dim(charles_tr)[1]/L
+
+#carlito
+preobj_ca<-preProcess(carlito_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_ca<-predict(preobj_ca,carlito_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_ca<-predict(preobj_ca,carlito_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_ca))>0){
+  nz<-nearZeroVar(jawtrNormed_ca)
+  jawtrNormed_ca<-jawtrNormed_ca[,-nz]
+  jawtesNormed_ca<-jawtesNormed_ca[,-nz]
+}
+#adelmo
+preobj_a<-preProcess(adelmo_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_a<-predict(preobj_a,adelmo_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_a<-predict(preobj_a,adelmo_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_a))>0){
+  nz<-nearZeroVar(jawtrNormed_a)
+  jawtrNormed_a<-jawtrNormed_a[,-nz]
+  jawtesNormed_a<-jawtesNormed_a[,-nz]
+}
+#eurico
+preobj_e<-preProcess(eurico_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_e<-predict(preobj_e,eurico_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_e<-predict(preobj_e,eurico_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_e))>0){
+  nz<-nearZeroVar(jawtrNormed_e)
+  jawtrNormed_e<-jawtrNormed_e[,-nz]
+  jawtesNormed_e<-jawtesNormed_e[,-nz]
+}
+#jeremy
+preobj_j<-preProcess(jeremy_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_j<-predict(preobj_j,jeremy_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_j<-predict(preobj_j,jeremy_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_j))>0){
+  nz<-nearZeroVar(jawtrNormed_j)
+  jawtrNormed_j<-jawtrNormed_j[,-nz]
+  jawtesNormed_j<-jawtesNormed_j[,-nz]
+}
+#pedro
+preobj_p<-preProcess(pedro_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_p<-predict(preobj_p,pedro_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_p<-predict(preobj_p,pedro_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_p))>0){
+  nz<-nearZeroVar(jawtrNormed_p)
+  jawtrNormed_p<-jawtrNormed_p[,-nz]
+  jawtesNormed_p<-jawtesNormed_p[,-nz]
+}
+#charles
+preobj_ch<-preProcess(charles_tr[,c(-1,-2,-3,-4,-5,-6,-7)],method=c('center','scale'))
+jawtrNormed_ch<-predict(preobj_ch,charles_tr[,c(-1,-2,-3,-4,-5,-6,-7)])
+jawtesNormed_ch<-predict(preobj_ch,charles_tes[,c(-1,-2,-3,-4,-5,-6,-7)])
+if(length(nearZeroVar(jawtrNormed_ch))>0){
+  nz<-nearZeroVar(jawtrNormed_ch)
+  jawtrNormed_ch<-jawtrNormed_ch[,-nz]
+  jawtesNormed_ch<-jawtesNormed_ch[,-nz]
+}
+
+#put them all back together separately normalized
+#jawtrSeparatelyNormed<-rbind(jawtrNormed_ca,jawtrNormed_a,jawtrNormed_e,jawtrNormed_j,jawtrNormed_p,jawtrNormed_ch)
+lda_model_ca<-train(carlito_tr$classe~.,method='lda',data=jawtrNormed_ca)
+#confusionMatrix(carlito_tr$classe,predict(lda_model_ca,jawtrNormed_ca))
+#confusion with test case
+cm<-confusionMatrix(carlito_tes$classe,predict(lda_model_ca,jawtesNormed_ca))
+#find on test set and add it to the table
+accuracydf[1,3]<-cm$overall[['Accuracy']]
+
+lda_model_a<-train(adelmo_tr$classe~.,method='lda',data=jawtrNormed_a)
+#confusionMatrix(adelmo_tr$classe,predict(lda_model_a,jawtrNormed_a))
+#confusion with test case
+cm<-confusionMatrix(adelmo_tes$classe,predict(lda_model_a,jawtesNormed_a))
+accuracydf[2,3]<-cm$overall[['Accuracy']]
+
+lda_model_e<-train(eurico_tr$classe~.,method='lda',data=jawtrNormed_e)
+#confusionMatrix(eurico_tr$classe,predict(lda_model_e,jawtrNormed_e))
+#confusion with test case
+cm<-confusionMatrix(eurico_tes$classe,predict(lda_model_e,jawtesNormed_e))
+accuracydf[3,3]<-cm$overall[['Accuracy']]
+
+
+lda_model_p<-train(pedro_tr$classe~.,method='lda',data=jawtrNormed_p)
+#confusionMatrix(pedro_tr$classe,predict(lda_model_p,jawtrNormed_p))
+cm<-confusionMatrix(pedro_tes$classe,predict(lda_model_p,jawtesNormed_p))
+accuracydf[4,3]<-cm$overall[['Accuracy']]
+
+lda_model_j<-train(jeremy_tr$classe~.,method='lda',data=jawtrNormed_j)
+#confusionMatrix(jeremy_tr$classe,predict(lda_model_j,jawtrNormed_j))
+cm<-confusionMatrix(jeremy_tes$classe,predict(lda_model_j,jawtesNormed_j))
+accuracydf[5,3]<-cm$overall[['Accuracy']]
+
+lda_model_ch<-train(charles_tr$classe~.,method='lda',data=jawtrNormed_ch)
+#confusionMatrix(charles_tr$classe,predict(lda_model_ch,jawtrNormed_ch))
+cm<-confusionMatrix(charles_tes$classe,predict(lda_model_ch,jawtesNormed_ch))
+accuracydf[6,3]<-cm$overall[['Accuracy']]
+
+fold_accuracy<-c(fold_accuracy,sum(accuracydf[,2]*accuracydf[,3]))
+}
+
+total_accuracy<-mean(fold_accuracy)
+1-total_accuracy
+```

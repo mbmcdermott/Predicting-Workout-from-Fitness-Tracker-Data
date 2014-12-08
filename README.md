@@ -1,0 +1,1 @@
+In this repository I build a method to predict what kind of exercise a person is undertaking based on tracker data (like a fitbit or a jawbone).
